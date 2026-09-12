@@ -21,6 +21,7 @@
  * - Native fetch is used exclusively with no external HTTP dependencies.
  */
 
+import './env.js';
 import type {
   AtsPlatform,
   BreethQueryPayload,

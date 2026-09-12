@@ -16,13 +16,30 @@ describe('Apply Anywhere - LifeOS Agent Suite', () => {
   let tempDir: string;
   let originalFetch: typeof fetch;
 
+  let savedBreethKey: string | undefined;
+  let savedOpenRouterKey: string | undefined;
+
   beforeEach(() => {
     originalFetch = globalThis.fetch;
+    savedBreethKey = process.env.BREETH_API_KEY;
+    savedOpenRouterKey = process.env.OPENROUTER_API_KEY;
+    delete process.env.BREETH_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lifeos-test-'));
   });
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
+    if (savedBreethKey !== undefined) {
+      process.env.BREETH_API_KEY = savedBreethKey;
+    } else {
+      delete process.env.BREETH_API_KEY;
+    }
+    if (savedOpenRouterKey !== undefined) {
+      process.env.OPENROUTER_API_KEY = savedOpenRouterKey;
+    } else {
+      delete process.env.OPENROUTER_API_KEY;
+    }
     try {
       fs.rmSync(tempDir, { recursive: true, force: true });
     } catch {}
