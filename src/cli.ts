@@ -65,6 +65,7 @@ import { classifyCommandOrigin, formatCommandOrigin } from './command-origin.js'
 import { readOverrideRecords, removeOverrideRecords } from './override-provenance.js';
 import { clearDaemonRunContext, generateRunId, isUnknownOutcomeError, runWithDaemonRunContext } from './session-lease.js';
 import { createLocalLearningBackend, createLocalSiteMemoryBackend, registerSiteCommands } from './site-memory/commands.js';
+import { registerLifeOsCommands } from './lifeos/cli.js';
 import { resolveAdapterSourcePath, splitAdapterCommandKey } from './adapter-source.js';
 
 const CLI_FILE = fileURLToPath(import.meta.url);
@@ -582,6 +583,7 @@ export function createProgram(BUILTIN_CLIS: string, USER_CLIS: string, pluginsDi
     .description('Make any website your CLI. Zero setup. AI-powered.');
   configureRootCommandSurface(program);
   registerSiteCommands(program, createLocalSiteMemoryBackend(), undefined, {}, createLocalLearningBackend());
+  registerLifeOsCommands(program);
   const siteCmd = program.commands.find(command => command.name() === 'site')!;
   // Snapshot before applyRootSubcommandSummaries() rewrites .description() to a child-name listing.
   const originalSiteDescription = siteCmd.description();

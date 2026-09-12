@@ -1,606 +1,351 @@
-import { useState, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import Header from './components/Header'
+import GoalInput from './components/GoalInput'
+import AgentTimeline from './components/AgentTimeline'
+import RecoveryPanel from './components/RecoveryPanel'
+import UiChangeCard from './components/UiChangeCard'
+import ApprovalModal from './components/ApprovalModal'
+import ProfileCard from './components/ProfileCard'
+import ApplicationHistory from './components/ApplicationHistory'
+import RunDetails from './components/RunDetails'
+import MetricsCard from './components/MetricsCard'
+import {
+  agentService,
+  INITIAL_PROFILE,
+  INITIAL_METRICS,
+  INITIAL_APPLICATIONS,
+  DEMO_SEQUENCE,
+} from './services/agentService'
 
 export default function App() {
-  const [prompt, setPrompt] = useState('')
-  const [resumeName, setResumeName] = useState('Alex_Chen_Resume_2026.pdf')
-  const fileInputRef = useRef(null)
+  // Navigation
+  const [activeTab, setActiveTab] = useState('mission')
 
-  const exampleSteps = [
-    {
-      id: '1',
-      title: 'Goal understood',
-      status: 'done',
-      time: 'Just now',
-      description: 'Extracted application target and profile constraints',
-    },
-    {
-      id: '2',
-      title: 'Opening application portal',
-      status: 'done',
-      time: 'Just now',
-      description: 'Connected via CloakBrowser with clean session lease',
-    },
-    {
-      id: '3',
-      title: 'Reading page',
-      status: 'done',
-      time: 'Just now',
-      description: 'Captured DOM accessibility tree and interactive elements',
-    },
-    {
-      id: '4',
-      title: 'Mapping form fields',
-      status: 'done',
-      time: 'Just now',
-      description: 'Matched profile attributes to job application fields',
-    },
-    {
-      id: '5',
-      title: 'Waiting for agent',
-      status: 'waiting',
-      time: 'Active',
-      description: 'Ready to execute submit flow or step-by-step verification',
-    },
-  ]
+  // Agent State
+  const [prompt, setPrompt] = useState('Apply for this internship')
+  const [agentStatus, setAgentStatus] = useState('Ready') // Ready | Running | Demo Running | Waiting Approval | Completed
+  const [currentSite, setCurrentSite] = useState('stripe.com/jobs')
+  const [currentProgress, setCurrentProgress] = useState(0)
+  const [currentStepLabel, setCurrentStepLabel] = useState('')
 
-  const handleResumeUpload = (e) => {
-    const file = e.target.files?.[0]
-    if (file) {
-      setResumeName(file.name)
+  // Data State
+  const [profile, setProfile] = useState(INITIAL_PROFILE)
+  const [metrics, setMetrics] = useState(INITIAL_METRICS)
+  const [applications, setApplications] = useState(INITIAL_APPLICATIONS)
+  const [selectedRunId, setSelectedRunId] = useState(INITIAL_APPLICATIONS[0].id)
+  const [runDetailsData, setRunDetailsData] = useState(null)
+
+  // Timeline & Recovery State
+  const [timelineSteps, setTimelineSteps] = useState([
+    { id: 1, label: 'Goal understood', status: 'success', detail: 'Parsed goal target and constraints' },
+    { id: 2, label: 'Opening application portal', status: 'success', detail: 'Initialized CloakBrowser session' },
+    { id: 3, label: 'Reading page', status: 'success', detail: 'Captured DOM accessibility tree' },
+    { id: 4, label: 'Mapping form fields', status: 'success', detail: 'Matched candidate profile attributes' },
+    { id: 5, label: 'Waiting for agent', status: 'pending', detail: 'Ready for user command execution' },
+  ])
+
+  const [recoveryData, setRecoveryData] = useState({
+    activeProblem: 'None detected',
+    whatChanged: 'No DOM deviations currently observed',
+    whatAgentTried: 'Standard accessibility tree mapping',
+    recoveryMethod: 'Semantic Intent Fallback + DOM Mutation Observer',
+    recoverySucceeded: true,
+    learnedStrategy: 'button[name="apply-now"] → role="button"[text*="Start Application"]',
+    recoveryCount: 1,
+    learnedCount: 2,
+    usedMemory: true,
+    memoryKey: 'stripe.com/jobs/applicant-gateway',
+  })
+
+  // Modals & UI Toggles
+  const [showApprovalModal, setShowApprovalModal] = useState(false)
+  const [showUiChangeCard, setShowUiChangeCard] = useState(true)
+
+  // Demo Simulation State
+  const [isDemoRunning, setIsDemoRunning] = useState(false)
+  const [demoStepIndex, setDemoStepIndex] = useState(0)
+  const timerRef = useRef(null)
+
+  // Load Run Details when selected
+  useEffect(() => {
+    agentService.getRunDetails(selectedRunId).then((data) => {
+      setRunDetailsData(data)
+    })
+  }, [selectedRunId])
+
+  // Clean up timer on unmount
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current)
     }
+  }, [])
+
+  // Handle Demo Mode Simulation
+  const stepDemoForward = useCallback((nextIndex) => {
+    if (nextIndex >= DEMO_SEQUENCE.length) {
+      if (timerRef.current) clearInterval(timerRef.current)
+      setIsDemoRunning(false)
+      return
+    }
+
+    const step = DEMO_SEQUENCE[nextIndex]
+    setCurrentProgress(step.progress)
+    setCurrentStepLabel(step.label)
+    setCurrentSite(step.site)
+
+    // Append / update timeline
+    setTimelineSteps(() => {
+      const updated = DEMO_SEQUENCE.slice(0, nextIndex + 1).map((s, idx) => ({
+        id: s.id,
+        label: s.label,
+        status: idx === nextIndex && s.requireApproval ? 'active' : s.status,
+        detail: s.detail,
+      }))
+      return updated
+    })
+
+    // Update Recovery Panel if this step triggers adaptation
+    if (step.stepKey === 'site-changed' || step.stepKey === 'apply-now-missing') {
+      setShowUiChangeCard(true)
+      setRecoveryData((prev) => ({
+        ...prev,
+        activeProblem: 'Primary submit selector button[name="apply-now"] missing from DOM',
+        whatChanged: 'Career portal design shifted: "Apply Now" replaced with "Start Application" CTA',
+        whatAgentTried: 'Queried accessibility tree; fall back to semantic text intent search',
+        recoveryMethod: 'Autonomous CDP selector reconciliation & mutation retry',
+        recoverySucceeded: false,
+      }))
+    }
+
+    if (step.stepKey === 'recovery-success') {
+      setRecoveryData((prev) => ({
+        ...prev,
+        recoverySucceeded: true,
+        recoveryCount: prev.recoveryCount + 1,
+        whatAgentTried: 'Synthesized click on fallback [role="button"][name="Start Application"]',
+      }))
+      setMetrics((prev) => ({
+        ...prev,
+        recoveryCount: prev.recoveryCount + 1,
+      }))
+    }
+
+    if (step.stepKey === 'strategy-saved') {
+      setRecoveryData((prev) => ({
+        ...prev,
+        learnedCount: prev.learnedCount + 1,
+        learnedStrategy: 'stripe.com: map button[name="apply-now"] → role="button"[text*="Start Application"]',
+        memoryKey: 'stripe.com/jobs/applicant-gateway',
+        usedMemory: true,
+      }))
+      setMetrics((prev) => ({
+        ...prev,
+        learnedStrategies: prev.learnedStrategies + 1,
+        memoryHits: prev.memoryHits + 1,
+      }))
+    }
+
+    // When reaching Step 13: Waiting for Human Approval
+    if (step.requireApproval) {
+      if (timerRef.current) clearInterval(timerRef.current)
+      setIsDemoRunning(false)
+      setAgentStatus('Waiting Approval')
+      setShowApprovalModal(true)
+      return
+    }
+
+    setDemoStepIndex(nextIndex + 1)
+  }, [])
+
+  const handleRunDemo = () => {
+    if (isDemoRunning) {
+      // Pause
+      if (timerRef.current) clearInterval(timerRef.current)
+      setIsDemoRunning(false)
+      setAgentStatus('Ready')
+      return
+    }
+
+    // Start or resume
+    setIsDemoRunning(true)
+    setAgentStatus('Demo Running')
+    setActiveTab('mission')
+
+    let currentIndex = demoStepIndex >= DEMO_SEQUENCE.length ? 0 : demoStepIndex
+    if (currentIndex === 0) {
+      setTimelineSteps([])
+    }
+
+    timerRef.current = setInterval(() => {
+      stepDemoForward(currentIndex)
+      currentIndex += 1
+    }, 1200)
   }
 
-  const triggerFileInput = () => {
-    fileInputRef.current?.click()
+  // Human Approval Actions
+  const handleApproveSubmission = () => {
+    setShowApprovalModal(false)
+    setAgentStatus('Completed')
+    setCurrentProgress(100)
+    setCurrentStepLabel('Completed — Application Submitted')
+
+    // Add completed final step to timeline
+    setTimelineSteps((prev) => [
+      ...prev,
+      {
+        id: 99,
+        label: '✓ Application submitted with verified human approval',
+        status: 'success',
+        detail: 'Receipt stored. Confirmation snapshot logged to .webcmd/receipts/',
+      },
+    ])
+
+    // Prepend to application history
+    const newApp = {
+      id: `run-${Math.floor(1000 + Math.random() * 9000)}`,
+      company: 'Stripe',
+      role: 'Software Engineering Intern — Infrastructure',
+      website: 'stripe.com/jobs',
+      status: 'Completed',
+      date: 'Just now',
+      recoveryCount: 1,
+      learnedStrategy: 'button[name="apply-now"] → Start Application',
+      duration: '1m 12s',
+      llmCalls: 6,
+      memoryHits: 4,
+    }
+
+    setApplications((prev) => [newApp, ...prev])
+    setSelectedRunId(newApp.id)
+  }
+
+  const handleCancelSubmission = () => {
+    setShowApprovalModal(false)
+    setAgentStatus('Cancelled by User')
+    setCurrentStepLabel('Run cancelled before submission')
+  }
+
+  // Custom Goal Run
+  const handleStartAgent = () => {
+    setAgentStatus('Running')
+    setCurrentProgress(15)
+    setCurrentStepLabel(`Analyzing: ${prompt}`)
+    setTimelineSteps([
+      { id: 1, label: 'Goal parsed', status: 'success', detail: prompt },
+      { id: 2, label: 'Connecting to browser', status: 'active', detail: 'Spawning CloakBrowser session' },
+      { id: 3, label: 'Form discovery', status: 'pending', detail: 'Awaiting navigation to target portal' },
+    ])
+  }
+
+  const handleSelectRun = (runId) => {
+    setSelectedRunId(runId)
+    setActiveTab('rundetails')
   }
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
-      {/* 1. Top Header */}
-      <header style={{
-        backgroundColor: 'rgba(15, 20, 34, 0.85)',
-        backdropFilter: 'blur(12px)',
-        borderBottom: '1px solid var(--border-subtle)',
-        position: 'sticky',
-        top: 0,
-        zIndex: 20,
-      }}>
-        <div style={{
-          maxWidth: '1200px',
-          margin: '0 auto',
-          padding: '1rem 1.5rem',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: '1rem',
-        }}>
-          {/* Logo & Subtitle */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.875rem' }}>
-            <div style={{
-              width: '38px',
-              height: '38px',
-              borderRadius: '10px',
-              background: 'linear-gradient(135deg, rgba(56, 189, 248, 0.2), rgba(99, 102, 241, 0.3))',
-              border: '1px solid rgba(56, 189, 248, 0.35)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: 'var(--accent-cyan)',
-              flexShrink: 0,
-            }}>
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 2v4" />
-                <path d="m4.93 4.93 2.83 2.83" />
-                <path d="M2 12h4" />
-                <path d="m4.93 19.07 2.83-2.83" />
-                <path d="M12 22v-4" />
-                <path d="m19.07 19.07-2.83-2.83" />
-                <path d="M22 12h-4" />
-                <path d="m19.07 4.93-2.83 2.83" />
-                <circle cx="12" cy="12" r="4" />
-              </svg>
-            </div>
-            <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem' }}>
-                <h1 style={{
-                  fontSize: '1.25rem',
-                  fontWeight: 700,
-                  letterSpacing: '-0.02em',
-                  color: 'var(--text-primary)',
-                  lineHeight: 1.2,
-                }}>
-                  LifeOS Agent
-                </h1>
-                <span style={{
-                  fontSize: '0.6875rem',
-                  fontFamily: 'var(--font-mono)',
-                  padding: '0.125rem 0.5rem',
-                  borderRadius: '9999px',
-                  backgroundColor: 'rgba(56, 189, 248, 0.1)',
-                  color: 'var(--accent-cyan)',
-                  border: '1px solid rgba(56, 189, 248, 0.2)',
-                }}>
-                  SLAB Hackathon
-                </span>
-              </div>
-              <p style={{
-                fontSize: '0.8125rem',
-                color: 'var(--text-secondary)',
-                fontWeight: 500,
-              }}>
-                Adaptive browser employee
-              </p>
-            </div>
-          </div>
-
-          {/* Right Status Indicator */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem',
-              padding: '0.375rem 0.875rem',
-              borderRadius: '9999px',
-              backgroundColor: 'rgba(16, 185, 129, 0.08)',
-              border: '1px solid rgba(16, 185, 129, 0.25)',
-              fontSize: '0.8125rem',
-              fontWeight: 600,
-              color: 'var(--accent-emerald)',
-            }}>
-              <span className="pulse-dot" />
-              Ready
-            </div>
-          </div>
-        </div>
-      </header>
+      {/* 1. Header */}
+      <Header
+        activeTab={activeTab}
+        onSelectTab={setActiveTab}
+        agentStatus={agentStatus}
+        currentRunProgress={isDemoRunning || currentProgress > 0 ? currentProgress : null}
+      />
 
       {/* Main Content Area */}
       <main style={{
-        maxWidth: '1200px',
+        maxWidth: '1280px',
         width: '100%',
         margin: '0 auto',
-        padding: '2rem 1.5rem 3rem',
+        padding: '1.75rem 1.5rem 3rem',
+        flex: 1,
         display: 'flex',
         flexDirection: 'column',
-        gap: '1.75rem',
-        flex: 1,
       }}>
-        {/* Top Two-Column Grid: Task Input + Agent Activity */}
-        <section className="two-column-grid" style={{
-          display: 'grid',
-          gridTemplateColumns: '1.15fr 0.85fr',
-          gap: '1.75rem',
-        }}>
-          {/* 2. Main Left Section: Goal & Prompt */}
-          <div className="lifeos-card" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-            <div>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
-                <span style={{
-                  fontSize: '0.75rem',
-                  fontWeight: 600,
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.06em',
-                  color: 'var(--accent-cyan)',
-                  fontFamily: 'var(--font-mono)',
-                }}>
-                  Autonomous Mission
-                </span>
-                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                  Natural language goal
-                </span>
-              </div>
+        {/* Runtime Performance Telemetry Cards */}
+        <MetricsCard metrics={metrics} />
 
-              <h2 style={{
-                fontSize: '1.625rem',
-                fontWeight: 700,
-                letterSpacing: '-0.025em',
-                marginBottom: '0.75rem',
-                color: 'var(--text-primary)',
-              }}>
-                What do you want me to do?
-              </h2>
-
-              <p style={{
-                fontSize: '0.875rem',
-                color: 'var(--text-secondary)',
-                marginBottom: '1.25rem',
-                lineHeight: 1.5,
-              }}>
-                Specify an internship or job URL, target company, or goal. The LifeOS agent analyzes the application portal, resolves required fields, and adapts around roadblocks.
-              </p>
-
-              {/* Text Input */}
-              <div style={{ marginBottom: '1rem' }}>
-                <textarea
-                  className="lifeos-textarea"
-                  value={prompt}
-                  onChange={(e) => setPrompt(e.target.value)}
-                  placeholder="Apply for this internship"
-                  rows={4}
-                  aria-label="Agent instructions"
-                />
-              </div>
-
-              {/* Quick Prompt Suggestions */}
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1.5rem' }}>
-                <button
-                  type="button"
-                  className="pill-button"
-                  onClick={() => setPrompt('Apply for this internship')}
-                >
-                  ⚡ Apply for this internship
-                </button>
-                <button
-                  type="button"
-                  className="pill-button"
-                  onClick={() => setPrompt('Apply for Software Engineer Intern role at Stripe with my resume')}
-                >
-                  Stripe SWE Intern
-                </button>
-                <button
-                  type="button"
-                  className="pill-button"
-                  onClick={() => setPrompt('Review application form on Lever and map all fields')}
-                >
-                  Autofill Lever Portal
-                </button>
-              </div>
-            </div>
-
-            {/* Action Bar */}
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              paddingTop: '1.25rem',
-              borderTop: '1px solid var(--border-subtle)',
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <rect width="18" height="18" x="3" y="3" rx="2" />
-                  <path d="m9 12 2 2 4-4" />
-                </svg>
-                <span>Full deterministic audit trail enabled</span>
-              </div>
-
-              <button
-                type="button"
-                className="btn-primary"
-                onClick={() => {}}
-              >
-                <span>Start Agent</span>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <polygon points="6 3 20 12 6 21 6 3" />
-                </svg>
-              </button>
-            </div>
-          </div>
-
-          {/* 3. Main Right Section: Agent Activity Timeline */}
-          <div className="lifeos-card" style={{ display: 'flex', flexDirection: 'column' }}>
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              marginBottom: '1.5rem',
-              paddingBottom: '0.875rem',
-              borderBottom: '1px solid var(--border-subtle)',
-            }}>
-              <div>
-                <h2 style={{ fontSize: '1.125rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-                  Agent Activity
-                </h2>
-                <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                  Live execution trace &amp; step resolution
-                </p>
-              </div>
-              <span style={{
-                fontSize: '0.75rem',
-                fontFamily: 'var(--font-mono)',
-                color: 'var(--accent-cyan)',
-                backgroundColor: 'rgba(56, 189, 248, 0.08)',
-                padding: '0.25rem 0.5rem',
-                borderRadius: '6px',
-                border: '1px solid rgba(56, 189, 248, 0.2)',
-              }}>
-                5 steps
-              </span>
-            </div>
-
-            {/* Stepped Timeline */}
-            <div style={{ display: 'flex', flexDirection: 'column', flex: 1, justifyContent: 'space-between' }}>
-              {exampleSteps.map((step) => (
-                <div key={step.id} className="timeline-item">
-                  <div className="timeline-line" />
-                  
-                  {step.status === 'done' ? (
-                    <div className="timeline-icon-done" aria-label="Step completed">
-                      ✓
-                    </div>
-                  ) : (
-                    <div className="timeline-icon-waiting pulse-icon" aria-label="Waiting for execution">
-                      ⚡
-                    </div>
-                  )}
-
-                  <div style={{ flex: 1 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <div style={{
-                        fontSize: '0.875rem',
-                        fontWeight: 600,
-                        color: step.status === 'done' ? 'var(--text-primary)' : 'var(--accent-cyan)',
-                      }}>
-                        {step.title}
-                      </div>
-                      <span style={{
-                        fontSize: '0.6875rem',
-                        color: step.status === 'done' ? 'var(--text-muted)' : 'var(--accent-cyan)',
-                        fontFamily: 'var(--font-mono)',
-                      }}>
-                        {step.time}
-                      </span>
-                    </div>
-                    <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.125rem' }}>
-                      {step.description}
-                    </p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        {/* Bottom Two-Column Grid: Your Profile + Recovery & Learning */}
-        <section className="two-column-grid" style={{
-          display: 'grid',
-          gridTemplateColumns: '1.25fr 0.75fr',
-          gap: '1.75rem',
-        }}>
-          {/* 4. Below: Your Profile Card */}
-          <div className="lifeos-card">
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              marginBottom: '1.25rem',
-              paddingBottom: '0.875rem',
-              borderBottom: '1px solid var(--border-subtle)',
-            }}>
-              <div>
-                <h2 style={{ fontSize: '1.125rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-                  Your Profile
-                </h2>
-                <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                  Credential and application metadata stored locally
-                </p>
-              </div>
-
-              {/* Upload Resume Button */}
-              <div>
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  style={{ display: 'none' }}
-                  accept=".pdf,.doc,.docx"
-                  onChange={handleResumeUpload}
-                />
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  onClick={triggerFileInput}
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                    <polyline points="17 8 12 3 7 8" />
-                    <line x1="12" y1="3" x2="12" y2="15" />
-                  </svg>
-                  <span>Upload Resume</span>
-                </button>
-              </div>
-            </div>
-
-            {/* Profile Fields Details */}
-            <div style={{
+        {/* TAB 1: MISSION (Dashboard) */}
+        {activeTab === 'mission' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.75rem' }}>
+            {/* Upper Grid: Goal Input + Live Activity */}
+            <div className="two-column-grid" style={{
               display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-              gap: '1rem',
-              marginBottom: '1.25rem',
+              gridTemplateColumns: '1.15fr 0.85fr',
+              gap: '1.75rem',
             }}>
-              {/* Name */}
-              <div style={{
-                background: 'var(--bg-input)',
-                border: '1px solid var(--border-subtle)',
-                borderRadius: '8px',
-                padding: '0.75rem 1rem',
-              }}>
-                <span style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  Name
-                </span>
-                <div style={{ fontSize: '0.9375rem', fontWeight: 500, color: 'var(--text-primary)', marginTop: '0.125rem' }}>
-                  Alex Chen
-                </div>
-              </div>
+              <GoalInput
+                prompt={prompt}
+                setPrompt={setPrompt}
+                onStartAgent={handleStartAgent}
+                onRunDemo={handleRunDemo}
+                isDemoRunning={isDemoRunning}
+                currentSite={currentSite}
+                currentStepLabel={currentStepLabel}
+                progress={currentProgress}
+              />
 
-              {/* Email */}
-              <div style={{
-                background: 'var(--bg-input)',
-                border: '1px solid var(--border-subtle)',
-                borderRadius: '8px',
-                padding: '0.75rem 1rem',
-              }}>
-                <span style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  Email
-                </span>
-                <div style={{ fontSize: '0.9375rem', fontWeight: 500, color: 'var(--text-primary)', marginTop: '0.125rem' }}>
-                  alex.chen@example.com
-                </div>
-              </div>
+              <AgentTimeline steps={timelineSteps} />
             </div>
 
-            {/* Skills */}
-            <div style={{
-              background: 'var(--bg-input)',
-              border: '1px solid var(--border-subtle)',
-              borderRadius: '8px',
-              padding: '0.75rem 1rem',
-              marginBottom: '1rem',
+            {/* Lower Grid: Recovery & Learning + Website Change Visualization */}
+            <div className="two-column-grid" style={{
+              display: 'grid',
+              gridTemplateColumns: '1fr 1fr',
+              gap: '1.75rem',
             }}>
-              <span style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                Skills
-              </span>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginTop: '0.5rem' }}>
-                <span className="skill-badge">React 19</span>
-                <span className="skill-badge">TypeScript</span>
-                <span className="skill-badge">Python</span>
-                <span className="skill-badge">Node.js</span>
-                <span className="skill-badge">Browser Automation</span>
-                <span className="skill-badge">Agentic Workflows</span>
-              </div>
-            </div>
-
-            {/* Resume File Pill */}
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              background: 'var(--bg-input)',
-              border: '1px solid var(--border-subtle)',
-              borderRadius: '8px',
-              padding: '0.75rem 1rem',
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                <div style={{
-                  width: '32px',
-                  height: '32px',
-                  borderRadius: '6px',
-                  background: 'rgba(239, 68, 68, 0.12)',
-                  border: '1px solid rgba(239, 68, 68, 0.3)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  color: '#f87171',
-                  fontSize: '0.75rem',
-                  fontWeight: 700,
-                  fontFamily: 'var(--font-mono)',
-                }}>
-                  PDF
-                </div>
-                <div>
-                  <div style={{ fontSize: '0.875rem', fontWeight: 500, color: 'var(--text-primary)' }}>
-                    {resumeName}
-                  </div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                    Resume file linked for automatic file upload matching
-                  </div>
-                </div>
-              </div>
-
-              <span style={{
-                fontSize: '0.6875rem',
-                color: 'var(--accent-emerald)',
-                backgroundColor: 'rgba(16, 185, 129, 0.1)',
-                padding: '0.2rem 0.5rem',
-                borderRadius: '4px',
-                border: '1px solid rgba(16, 185, 129, 0.25)',
-              }}>
-                Active
-              </span>
+              <RecoveryPanel recoveryData={recoveryData} />
+              <UiChangeCard isAdapted={showUiChangeCard} />
             </div>
           </div>
+        )}
 
-          {/* 5. Bottom/Side Area: Recovery & Learning */}
-          <div className="lifeos-card" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-            <div>
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                marginBottom: '1.25rem',
-                paddingBottom: '0.875rem',
-                borderBottom: '1px solid var(--border-subtle)',
-              }}>
-                <div>
-                  <h2 style={{ fontSize: '1.125rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-                    Recovery &amp; Learning
-                  </h2>
-                  <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                    Self-healing heuristics &amp; site memory
-                  </p>
-                </div>
-
-                <div style={{
-                  width: '32px',
-                  height: '32px',
-                  borderRadius: '8px',
-                  background: 'rgba(168, 85, 247, 0.15)',
-                  border: '1px solid rgba(168, 85, 247, 0.3)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  color: 'var(--accent-purple)',
-                }}>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M12 20h9" />
-                    <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
-                  </svg>
-                </div>
-              </div>
-
-              {/* Stats Grid */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.875rem', marginBottom: '1.25rem' }}>
-                <div className="stat-tile">
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 500 }}>
-                    Recoveries
-                  </span>
-                  <span className="stat-value" style={{ color: 'var(--accent-cyan)' }}>
-                    0
-                  </span>
-                  <span style={{ fontSize: '0.6875rem', color: 'var(--text-secondary)' }}>
-                    0 recoveries
-                  </span>
-                </div>
-
-                <div className="stat-tile">
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 500 }}>
-                    Strategies
-                  </span>
-                  <span className="stat-value" style={{ color: 'var(--accent-emerald)' }}>
-                    0
-                  </span>
-                  <span style={{ fontSize: '0.6875rem', color: 'var(--text-secondary)' }}>
-                    0 learned strategies
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Memory Store Sync Footer */}
-            <div style={{
-              background: 'var(--bg-input)',
-              border: '1px solid var(--border-subtle)',
-              borderRadius: '8px',
-              padding: '0.75rem 0.875rem',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.625rem',
-            }}>
-              <div style={{
-                width: '6px',
-                height: '6px',
-                borderRadius: '50%',
-                backgroundColor: 'var(--accent-cyan)',
-              }} />
-              <span style={{
-                fontSize: '0.75rem',
-                color: 'var(--text-secondary)',
-                lineHeight: 1.4,
-              }}>
-                Connected to local site-memory engine. Will autonomously record ATS field adaptations.
-              </span>
-            </div>
+        {/* TAB 2: PROFILE */}
+        {activeTab === 'profile' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+            <ProfileCard
+              profile={profile}
+              onUpdateProfile={setProfile}
+            />
           </div>
-        </section>
+        )}
+
+        {/* TAB 3: APPLICATIONS */}
+        {activeTab === 'applications' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+            <ApplicationHistory
+              applications={applications}
+              onSelectRun={handleSelectRun}
+            />
+          </div>
+        )}
+
+        {/* TAB 4: RUN DETAILS */}
+        {activeTab === 'rundetails' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+            <RunDetails
+              run={runDetailsData}
+              onBackToHistory={() => setActiveTab('applications')}
+            />
+          </div>
+        )}
       </main>
+
+      {/* Human Approval Modal (High-stakes safety gate) */}
+      <ApprovalModal
+        isOpen={showApprovalModal}
+        onApprove={handleApproveSubmission}
+        onCancel={handleCancelSubmission}
+        targetWebsite={currentSite}
+        role="Software Engineering Intern — Infrastructure"
+        candidate={{
+          name: profile.name,
+          email: profile.email,
+          phone: profile.phone,
+          resume: profile.resume.fileName,
+          skills: profile.skills.slice(0, 4).join(', '),
+        }}
+      />
     </div>
   )
 }

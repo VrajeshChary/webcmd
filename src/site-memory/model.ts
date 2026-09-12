@@ -59,7 +59,7 @@ export interface ProductResolution {
 
 export type CandidateStatus = 'pending' | 'ingested' | 'rejected';
 
-export const CANDIDATE_KINDS = ['action_space', 'better_path', 'access', 'high_consequence', 'repeated_mistake'] as const;
+export const CANDIDATE_KINDS = ['action_space', 'better_path', 'access', 'high_consequence', 'repeated_mistake', 'recovery_strategy', 'field_mapping'] as const;
 export type CandidateKind = (typeof CANDIDATE_KINDS)[number];
 
 export interface CandidateEnvironment {
