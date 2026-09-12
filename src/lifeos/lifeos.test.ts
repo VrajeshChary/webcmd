@@ -7,18 +7,22 @@ import { LifeOsAgent } from './agent-loop.js';
 import { BreethService } from './breeth-service.js';
 import { GoalPlanner } from './goal-planner.js';
 import { LearningAdapter } from './learning-adapter.js';
+import { OpenRouterLlmService } from './llm-service.js';
 import { ProfileStore } from './profile-store.js';
 import { RecoveryEngine } from './recovery-engine.js';
 import { UIDetector } from './ui-detector.js';
 
 describe('Apply Anywhere - LifeOS Agent Suite', () => {
   let tempDir: string;
+  let originalFetch: typeof fetch;
 
   beforeEach(() => {
+    originalFetch = globalThis.fetch;
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lifeos-test-'));
   });
 
   afterEach(() => {
+    globalThis.fetch = originalFetch;
     try {
       fs.rmSync(tempDir, { recursive: true, force: true });
     } catch {}
@@ -1349,5 +1353,204 @@ describe('Apply Anywhere - LifeOS Agent Suite', () => {
       expect(saved).toBe(false);
     });
   });
+
+  describe('OpenRouterLlmService & Nemotron Reasoning Layer', () => {
+    it('detects configuration status and defaults model to nvidia/nemotron-3-ultra-550b-a55b:free', () => {
+      const unconfigured = new OpenRouterLlmService({ apiKey: '' });
+      expect(unconfigured.isConfigured()).toBe(false);
+      expect(unconfigured.getModel()).toBe('nvidia/nemotron-3-ultra-550b-a55b:free');
+
+      const configured = new OpenRouterLlmService({
+        apiKey: 'sk-or-test-key-12345',
+        model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
+        fetchImpl: (() => {}) as any,
+      });
+      expect(configured.isConfigured()).toBe(true);
+      expect(configured.getModel()).toBe('nvidia/nemotron-3-ultra-550b-a55b:free');
+      expect(configured.getBaseUrl()).toBe('https://openrouter.ai/api/v1');
+    });
+
+    it('synthesizes structured recovery tactic from LLM chat completion', async () => {
+      const mockFetch: typeof fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+        const body = JSON.parse(init?.body as string);
+        expect(body.model).toBe('nvidia/nemotron-3-ultra-550b-a55b:free');
+        expect(init?.headers).toMatchObject({
+          Authorization: 'Bearer mock-key',
+          'Content-Type': 'application/json',
+        });
+
+        const mockResponse = {
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  description: 'Click the accept cookies button to dismiss the blocking overlay',
+                  recoveryAction: 'DISMISS_MODAL',
+                  fallbackSelector: '#onetrust-accept-btn-handler',
+                  alternativeSelectors: ['.cookie-consent-accept', 'button[aria-label="Accept All Cookies"]'],
+                  remedyCode: "document.querySelector('#onetrust-accept-btn-handler')?.click()",
+                  confidence: 0.92,
+                }),
+              },
+            },
+          ],
+        };
+
+        return new Response(JSON.stringify(mockResponse), { status: 200 });
+      }) as typeof fetch;
+
+      const service = new OpenRouterLlmService({
+        apiKey: 'mock-key',
+        model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
+        fetchImpl: mockFetch,
+      });
+
+      const tactic = await service.synthesizeRecoveryTactic({
+        domain: 'portal.example.com',
+        classification: 'MODAL_BLOCKER',
+        errorMessage: 'Element <button> intercepts pointer events',
+      });
+
+      expect(tactic).not.toBeNull();
+      expect(tactic?.recoveryAction).toBe('DISMISS_MODAL');
+      expect(tactic?.description).toContain('accept cookies');
+      expect(tactic?.fallbackSelector).toBe('#onetrust-accept-btn-handler');
+      expect(tactic?.confidence).toBe(0.92);
+      expect(tactic?.source).toBe('openrouter_llm');
+    });
+
+    it('rejects unsupported recovery actions and returns null', async () => {
+      const mockFetch: typeof fetch = (async () => {
+        return new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    description: 'Execute dangerous action',
+                    recoveryAction: 'DELETE_DATABASE',
+                  }),
+                },
+              },
+            ],
+          }),
+          { status: 200 }
+        );
+      }) as typeof fetch;
+
+      const service = new OpenRouterLlmService({
+        apiKey: 'mock-key',
+        fetchImpl: mockFetch,
+      });
+
+      const tactic = await service.synthesizeRecoveryTactic({
+        domain: 'portal.example.com',
+        classification: 'SELECTOR_DRIFT',
+      });
+
+      expect(tactic).toBeNull();
+    });
+
+    it('resolves ambiguous form fields and screening questions via LLM', async () => {
+      const mockFetch: typeof fetch = (async () => {
+        return new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    key: 'motivation',
+                    value: 'Excited about autonomous agents and browser automation architecture',
+                    confidence: 0.95,
+                  }),
+                },
+              },
+            ],
+          }),
+          { status: 200 }
+        );
+      }) as typeof fetch;
+
+      const service = new OpenRouterLlmService({
+        apiKey: 'mock-key',
+        fetchImpl: mockFetch,
+      });
+
+      const store = new ProfileStore();
+      const profile = store.load();
+
+      const result = await store.resolveFieldValueAsync(
+        'Why are you excited to join our autonomous agent engineering team?',
+        profile,
+        service
+      );
+
+      expect(result).not.toBeNull();
+      expect(result?.source).toBe('llm');
+      expect(result?.value).toContain('autonomous agents');
+    });
+
+    it('integrates OpenRouter reasoning into RecoveryEngine when memory has no match', async () => {
+      const mockFetch: typeof fetch = (async () => {
+        return new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    description: 'Use drifted input selector candidate_name',
+                    recoveryAction: 'RETRY_WITH_FALLBACK_SELECTOR',
+                    fallbackSelector: '#candidate_name',
+                    remedyCode: "document.querySelector('#candidate_name')?.focus()",
+                    confidence: 0.88,
+                  }),
+                },
+              },
+            ],
+          }),
+          { status: 200 }
+        );
+      }) as typeof fetch;
+
+      const llmService = new OpenRouterLlmService({
+        apiKey: 'mock-key',
+        fetchImpl: mockFetch,
+      });
+
+      const engine = new RecoveryEngine({
+        homeDir: tempDir,
+        llmService,
+      });
+
+      const tactic = await engine.resolveRecoveryTactic(
+        'unknown-portal.test',
+        'SELECTOR_DRIFT',
+        '#full_name',
+        undefined,
+        { errorMessage: 'Failed to find #full_name' }
+      );
+
+      expect(tactic).toBeDefined();
+      expect(tactic.source).toBe('openrouter_llm');
+      expect(tactic.fallbackSelector).toBe('#candidate_name');
+    });
+
+    it('falls back to deterministic rules when OpenRouter LLM fails or is unconfigured', async () => {
+      const unconfiguredEngine = new RecoveryEngine({
+        homeDir: tempDir,
+        llmService: new OpenRouterLlmService({ apiKey: '' }),
+      });
+
+      const tactic = await unconfiguredEngine.resolveRecoveryTactic(
+        'unknown-portal.test',
+        'MODAL_BLOCKER'
+      );
+
+      expect(tactic).toBeDefined();
+      expect(tactic.source).toBe('heuristic_engine');
+      expect(tactic.recoveryAction).toBe('DISMISS_MODAL');
+    });
+  });
 });
+
 

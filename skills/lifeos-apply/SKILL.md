@@ -53,3 +53,14 @@ webcmd lifeos strategies list
 webcmd lifeos logs list
 webcmd lifeos logs show <runId>
 ```
+
+### 4. AI Reasoning Engine (OpenRouter & NVIDIA Nemotron)
+
+```bash
+# Check active model and OpenRouter connectivity
+webcmd lifeos llm status
+
+# Probe live model latency and response
+webcmd lifeos llm test
+```
+

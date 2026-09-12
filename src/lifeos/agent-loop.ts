@@ -2,6 +2,7 @@ import * as path from 'node:path';
 import { ActionLogger } from './action-logger.js';
 import { GoalPlanner } from './goal-planner.js';
 import { LearningAdapter } from './learning-adapter.js';
+import { OpenRouterLlmService } from './llm-service.js';
 import { ProfileStore } from './profile-store.js';
 import { RecoveryEngine } from './recovery-engine.js';
 import { UIDetector, type RawPagePerception } from './ui-detector.js';
@@ -38,6 +39,7 @@ export interface LifeOsAgentOptions {
   recoveryEngine?: RecoveryEngine;
   profileStore?: ProfileStore;
   uiDetector?: UIDetector;
+  llmService?: OpenRouterLlmService;
 }
 
 export class LifeOsAgent {
@@ -45,6 +47,7 @@ export class LifeOsAgent {
   private uiDetector: UIDetector;
   private recoveryEngine: RecoveryEngine;
   private learningAdapter: LearningAdapter;
+  private llmService: OpenRouterLlmService;
 
   constructor(opts?: LifeOsAgentOptions | { homeDir?: string }) {
     const options = opts as LifeOsAgentOptions | undefined;
@@ -52,9 +55,14 @@ export class LifeOsAgent {
     this.uiDetector = options?.uiDetector ?? new UIDetector();
     this.learningAdapter =
       options?.learningAdapter ?? new LearningAdapter({ homeDir: options?.homeDir });
+    this.llmService = options?.llmService ?? new OpenRouterLlmService();
     this.recoveryEngine =
       options?.recoveryEngine ??
-      new RecoveryEngine({ learningAdapter: this.learningAdapter, homeDir: options?.homeDir });
+      new RecoveryEngine({
+        learningAdapter: this.learningAdapter,
+        homeDir: options?.homeDir,
+        llmService: this.llmService,
+      });
   }
 
   getRecoveryEngine(): RecoveryEngine {
@@ -63,6 +71,10 @@ export class LifeOsAgent {
 
   getLearningAdapter(): LearningAdapter {
     return this.learningAdapter;
+  }
+
+  getLlmService(): OpenRouterLlmService {
+    return this.llmService;
   }
 
   async run(options: AgentRunOptions): Promise<LifeOsRunResult> {
@@ -127,11 +139,13 @@ export class LifeOsAgent {
       if (!activeSessionId) {
         const sessionRecord = (await sendCommand('session-create', {
           sessionName: 'lifeos',
-        })) as { id?: string } | undefined;
-        if (!sessionRecord?.id || typeof sessionRecord.id !== 'string') {
+          contextId: 'default',
+        })) as { id?: string; data?: { id?: string } } | undefined;
+        const resolvedId = sessionRecord?.id ?? sessionRecord?.data?.id;
+        if (!resolvedId || typeof resolvedId !== 'string') {
           throw new Error('Failed to create browser session for LifeOS agent.');
         }
-        activeSessionId = sessionRecord.id;
+        activeSessionId = resolvedId;
       }
 
       const isPlaywright = /\b(page|context|browser)(\.|\?\.)/.test(script);
@@ -213,7 +227,12 @@ export class LifeOsAgent {
       const fillActions: Array<{ selector: string; value: string; fieldName: string }> = [];
       for (const el of formElements) {
         if (el.type === 'submit' || el.role === 'button' || el.type === 'file') continue;
-        const match = this.profileStore.resolveFieldValue(el.name, profile);
+        const match = await this.profileStore.resolveFieldValueAsync(
+          el.name || el.selector,
+          profile,
+          this.llmService,
+          { type: el.type, placeholder: el.placeholder }
+        );
         if (match && match.value) {
           fillActions.push({
             selector: el.selector,
@@ -513,7 +532,12 @@ export class LifeOsAgent {
     executeBrowserScript: (script: string) => Promise<any>,
     learnedRecoveries: RecoveryTactic[],
     verificationScript?: string,
-    context?: { errorMessage?: string; triggerContext?: string }
+    context?: {
+      errorMessage?: string;
+      triggerContext?: string;
+      htmlSnippet?: string;
+      profile?: ApplicantProfile;
+    }
   ): Promise<{ recovered: boolean; tactic?: RecoveryTactic }> {
     // 1. recovery_started
     logger.log(
@@ -525,13 +549,16 @@ export class LifeOsAgent {
       { target, uiChange: uiReport }
     );
 
-    // 2. Query RecoveryEngine (routes through LearningAdapter -> local/Breeth -> deterministic fallback)
+    // 2. Query RecoveryEngine (routes through LearningAdapter -> local/Breeth -> OpenRouter LLM -> deterministic fallback)
     const tactic = await this.recoveryEngine.resolveRecoveryTactic(
       domain,
       classification,
       target,
       uiReport,
-      context
+      {
+        ...context,
+        profile: context?.profile ?? this.profileStore.load(),
+      }
     );
 
     // 3. learned_strategy_used vs deterministic_fallback_used

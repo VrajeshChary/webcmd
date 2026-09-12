@@ -15,6 +15,14 @@
  * The data schemas here directly mirror `src/lifeos/types.ts`!
  */
 
+export const ACTIVE_LLM_CONFIG = {
+  provider: 'OpenRouter',
+  model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
+  modelDisplayName: 'NVIDIA Nemotron 3 Ultra (550B)',
+  isFreeTier: true,
+  status: 'Online',
+}
+
 export const INITIAL_PROFILE = {
   name: 'Alex Chen',
   email: 'alex.chen@example.com',

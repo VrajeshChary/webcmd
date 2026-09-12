@@ -117,6 +117,22 @@ export default function Header({ activeTab, onSelectTab, agentStatus = 'Ready', 
               }}>
                 SLAB Hackathon
               </span>
+              <span style={{
+                fontSize: '0.6875rem',
+                fontFamily: 'var(--font-mono)',
+                padding: '0.15rem 0.5rem',
+                borderRadius: '9999px',
+                backgroundColor: 'rgba(16, 185, 129, 0.12)',
+                color: 'var(--accent-emerald)',
+                border: '1px solid rgba(16, 185, 129, 0.3)',
+                fontWeight: 600,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.35rem',
+              }}>
+                <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: 'var(--accent-emerald)' }}></span>
+                Nemotron 3 Ultra (OpenRouter)
+              </span>
             </div>
             <p style={{
               fontSize: '0.8125rem',

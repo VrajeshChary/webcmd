@@ -1,5 +1,6 @@
 import { LearningAdapter } from './learning-adapter.js';
-import type { FailureClassification, RecoveryTactic, UIChangeReport } from './types.js';
+import { OpenRouterLlmService } from './llm-service.js';
+import type { ApplicantProfile, FailureClassification, RecoveryTactic, UIChangeReport } from './types.js';
 
 /**
  * Valid recovery actions recognized by the LifeOS execution model.
@@ -20,19 +21,23 @@ export interface RecoveryEngineOptions {
   learningAdapter?: LearningAdapter;
   homeDir?: string;
   minConfidenceThreshold?: number;
+  llmService?: OpenRouterLlmService;
 }
 
 export class RecoveryEngine {
   private learningAdapter: LearningAdapter;
   private minConfidenceThreshold: number;
+  private llmService?: OpenRouterLlmService;
 
   constructor(opts?: RecoveryEngineOptions | LearningAdapter) {
     if (opts instanceof LearningAdapter) {
       this.learningAdapter = opts;
       this.minConfidenceThreshold = DEFAULT_MIN_CONFIDENCE_THRESHOLD;
+      this.llmService = new OpenRouterLlmService();
     } else {
       this.learningAdapter = opts?.learningAdapter ?? new LearningAdapter({ homeDir: opts?.homeDir });
       this.minConfidenceThreshold = opts?.minConfidenceThreshold ?? DEFAULT_MIN_CONFIDENCE_THRESHOLD;
+      this.llmService = opts?.llmService ?? new OpenRouterLlmService();
     }
   }
 
@@ -42,6 +47,14 @@ export class RecoveryEngine {
 
   getLearningAdapter(): LearningAdapter {
     return this.learningAdapter;
+  }
+
+  setLlmService(service: OpenRouterLlmService): void {
+    this.llmService = service;
+  }
+
+  getLlmService(): OpenRouterLlmService | undefined {
+    return this.llmService;
   }
 
   /**
@@ -115,7 +128,12 @@ export class RecoveryEngine {
     classification: FailureClassification,
     failedSelector?: string,
     uiChange?: UIChangeReport,
-    context?: { errorMessage?: string; triggerContext?: string }
+    context?: {
+      errorMessage?: string;
+      triggerContext?: string;
+      htmlSnippet?: string;
+      profile?: ApplicantProfile;
+    }
   ): Promise<RecoveryTactic> {
     try {
       // 1. Query LearningAdapter for learned strategies (local cache + Breeth)
@@ -138,7 +156,33 @@ export class RecoveryEngine {
       // Graceful fallback: LearningAdapter or memory failures never crash the recovery engine
     }
 
-    // 3. Fall back to deterministic rules
+    // 3. Synthesize tactic via OpenRouter LLM reasoning if configured
+    if (this.llmService?.isConfigured()) {
+      try {
+        const aiTactic = await this.llmService.synthesizeRecoveryTactic({
+          domain,
+          classification,
+          failedSelector,
+          uiChange,
+          errorMessage: context?.errorMessage,
+          triggerContext: context?.triggerContext,
+          htmlSnippet: context?.htmlSnippet,
+          profile: context?.profile,
+        });
+
+        if (
+          aiTactic &&
+          ALLOWED_RECOVERY_ACTIONS.has(aiTactic.recoveryAction) &&
+          this.isSafeRemedyCode(aiTactic.remedyCode)
+        ) {
+          return aiTactic;
+        }
+      } catch {
+        // LLM failure falls back to deterministic heuristic
+      }
+    }
+
+    // 4. Fall back to deterministic rules
     return this.synthesizeDeterministicTactic(domain, classification, failedSelector, uiChange);
   }
 

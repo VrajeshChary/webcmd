@@ -165,6 +165,10 @@ export class ProfileStore {
       return { key: 'coverLetter', value: profile.coverLetter || '' };
     }
 
+    if (/\b(skills|technologies|tech\s*stack|programming\s*languages)\b/.test(normalized)) {
+      return { key: 'skills', value: (profile.skills || []).join(', ') };
+    }
+
     // Answers mapping
     if (profile.answers) {
       for (const [ansKey, ansVal] of Object.entries(profile.answers)) {
@@ -177,4 +181,45 @@ export class ProfileStore {
 
     return null;
   }
+
+  /**
+   * Asynchronously resolves field value, attempting fast regex rules first,
+   * and escalating to OpenRouter LLM reasoning for ambiguous or custom questions.
+   */
+  async resolveFieldValueAsync(
+    labelOrName: string,
+    profile: ApplicantProfile,
+    llmService?: import('./llm-service.js').OpenRouterLlmService,
+    fieldMetadata?: { type?: string; placeholder?: string; options?: string[]; isRequired?: boolean }
+  ): Promise<{ key: string; value: string; source: 'rule' | 'llm' } | null> {
+    const fast = this.resolveFieldValue(labelOrName, profile);
+    if (fast) {
+      return { ...fast, source: 'rule' };
+    }
+
+    if (llmService?.isConfigured()) {
+      try {
+        const llmMatch = await llmService.resolveFieldWithLlm({
+          labelOrName,
+          type: fieldMetadata?.type,
+          placeholder: fieldMetadata?.placeholder,
+          options: fieldMetadata?.options,
+          isRequired: fieldMetadata?.isRequired,
+          profile,
+        });
+        if (llmMatch && llmMatch.value) {
+          return {
+            key: llmMatch.key,
+            value: llmMatch.value,
+            source: 'llm',
+          };
+        }
+      } catch {
+        // Fall back gracefully
+      }
+    }
+
+    return null;
+  }
 }
+

@@ -29,6 +29,8 @@ sitemaps/
 *.crx
 *.zip
 .envrc
+.env.local
+.env
 .windsurf
 .claude
 .cortex

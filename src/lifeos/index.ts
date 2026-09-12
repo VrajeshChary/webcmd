@@ -7,4 +7,7 @@ export * from './learning-adapter.js';
 export * from './action-logger.js';
 export * from './agent-loop.js';
 export * from './breeth-service.js';
+export * from './llm-service.js';
+export * from './env.js';
 export * from './cli.js';
+

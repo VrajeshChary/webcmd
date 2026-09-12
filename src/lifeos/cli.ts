@@ -4,6 +4,7 @@ import { render as renderOutput } from '../output.js';
 import { ActionLogger } from './action-logger.js';
 import { LifeOsAgent } from './agent-loop.js';
 import { LearningAdapter } from './learning-adapter.js';
+import { OpenRouterLlmService } from './llm-service.js';
 import { ProfileStore } from './profile-store.js';
 
 export function registerLifeOsCommands(root: Command): Command {
@@ -185,5 +186,56 @@ export function registerLifeOsCommands(root: Command): Command {
       console.log(JSON.stringify(log, null, 2));
     });
 
+  // ── 5. LLM / OpenRouter Reasoning Engine ────────────────────────────────────
+  const llmCmd = lifeos.command('llm').description('Inspect and test OpenRouter AI reasoning integration');
+
+  const llmStatusCmd = addOutputFormatOption(
+    llmCmd.command('status').description('Show active LLM provider, model, and configuration')
+  );
+  llmStatusCmd.action(async (opts: any, command: Command) => {
+    const service = new OpenRouterLlmService();
+    const isConfigured = service.isConfigured();
+    const data = {
+      provider: 'OpenRouter',
+      model: service.getModel(),
+      configured: isConfigured,
+      endpoint: service.getBaseUrl(),
+    };
+    const fmt = resolveCommandOutputFormat(command, opts.format);
+    if (fmt === null) return;
+    if (outputFormatIsExplicit(command)) {
+      await renderOutput(data, { fmt, fmtExplicit: true });
+    } else {
+      console.log(`🤖 LifeOS AI Reasoning Engine (OpenRouter)`);
+      console.log(`Model:      ${data.model}`);
+      console.log(`Status:     ${isConfigured ? '✅ Configured (.env.local)' : '⚠️ Not configured'}`);
+      console.log(`Endpoint:   ${data.endpoint}`);
+    }
+  });
+
+  llmCmd
+    .command('test')
+    .description('Send a test probe to verify live OpenRouter model response')
+    .action(async () => {
+      const service = new OpenRouterLlmService();
+      if (!service.isConfigured()) {
+        console.error('Error: OPENROUTER_API_KEY is not set.');
+        process.exitCode = 1;
+        return;
+      }
+      console.log(`Probing OpenRouter with model "${service.getModel()}"...`);
+      const result = await service.testConnection();
+      if (result.ok) {
+        console.log(`✅ OpenRouter probe successful!`);
+        console.log(`   Model:   ${result.model}`);
+        console.log(`   Reply:   ${result.message}`);
+        console.log(`   Latency: ${result.latencyMs}ms`);
+      } else {
+        console.error(`❌ Probe failed: ${result.error}`);
+        process.exitCode = 1;
+      }
+    });
+
   return lifeos;
 }
+
