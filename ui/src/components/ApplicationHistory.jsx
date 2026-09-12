@@ -203,7 +203,7 @@ export default function ApplicationHistory({ applications = [], onSelectRun }) {
                   </td>
                 </tr>
               )
-            })}
+            }))}
           </tbody>
         </table>
       </div>
