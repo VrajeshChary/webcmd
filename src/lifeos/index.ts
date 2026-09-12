@@ -6,4 +6,5 @@ export * from './recovery-engine.js';
 export * from './learning-adapter.js';
 export * from './action-logger.js';
 export * from './agent-loop.js';
+export * from './breeth-service.js';
 export * from './cli.js';

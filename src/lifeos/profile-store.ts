@@ -137,7 +137,7 @@ export class ProfileStore {
     if (/\b(full\s*name|your\s*name|candidate\s*name)\b/.test(normalized)) {
       return { key: 'fullName', value: profile.fullName };
     }
-    if (/\b(email|e\s*mail)\b/.test(normalized)) {
+    if (/\b(email|e\s*mail|contact|contact\s*email)\b/.test(normalized) && !/\b(phone|mobile)\b/.test(normalized)) {
       return { key: 'email', value: profile.email };
     }
     if (/\b(phone|telephone|mobile|cell)\b/.test(normalized)) {

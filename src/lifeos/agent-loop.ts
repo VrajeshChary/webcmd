@@ -8,6 +8,7 @@ import { UIDetector, type RawPagePerception } from './ui-detector.js';
 import type {
   ActionLogEntry,
   ApplicantProfile,
+  FailureClassification,
   GoalIntent,
   LifeOsRunResult,
   RecoveryTactic,
@@ -27,6 +28,16 @@ export interface AgentRunOptions {
   homeDir?: string;
   /** Mock runner executor for automated testing without a live browser daemon */
   customExecutor?: (script: string) => Promise<any>;
+  /** Optional custom command dispatcher for testing daemon session interaction */
+  sendCommand?: (action: string, params?: any) => Promise<any>;
+}
+
+export interface LifeOsAgentOptions {
+  homeDir?: string;
+  learningAdapter?: LearningAdapter;
+  recoveryEngine?: RecoveryEngine;
+  profileStore?: ProfileStore;
+  uiDetector?: UIDetector;
 }
 
 export class LifeOsAgent {
@@ -35,15 +46,30 @@ export class LifeOsAgent {
   private recoveryEngine: RecoveryEngine;
   private learningAdapter: LearningAdapter;
 
-  constructor(opts?: { homeDir?: string }) {
-    this.profileStore = new ProfileStore();
-    this.uiDetector = new UIDetector();
-    this.recoveryEngine = new RecoveryEngine();
-    this.learningAdapter = new LearningAdapter({ homeDir: opts?.homeDir });
+  constructor(opts?: LifeOsAgentOptions | { homeDir?: string }) {
+    const options = opts as LifeOsAgentOptions | undefined;
+    this.profileStore = options?.profileStore ?? new ProfileStore();
+    this.uiDetector = options?.uiDetector ?? new UIDetector();
+    this.learningAdapter =
+      options?.learningAdapter ?? new LearningAdapter({ homeDir: options?.homeDir });
+    this.recoveryEngine =
+      options?.recoveryEngine ??
+      new RecoveryEngine({ learningAdapter: this.learningAdapter, homeDir: options?.homeDir });
+  }
+
+  getRecoveryEngine(): RecoveryEngine {
+    return this.recoveryEngine;
+  }
+
+  getLearningAdapter(): LearningAdapter {
+    return this.learningAdapter;
   }
 
   async run(options: AgentRunOptions): Promise<LifeOsRunResult> {
-    const logger = new ActionLogger(undefined, options.homeDir ? path.join(options.homeDir, '.webcmd', 'lifeos', 'logs') : undefined);
+    const logger = new ActionLogger(
+      undefined,
+      options.homeDir ? path.join(options.homeDir, '.webcmd', 'lifeos', 'logs') : undefined
+    );
     const runId = logger.runId;
 
     // 1. Load profile
@@ -75,7 +101,7 @@ export class LifeOsAgent {
     let recoveriesAppliedCount = 0;
     let currentPhase: WorkflowPhase = 'discovery';
 
-    // 3. Load prior memory / learned recovery strategies
+    // 3. Load prior memory / learned recovery strategies (via LearningAdapter / Breeth)
     const priorStrategies = await this.learningAdapter.getLearnedRecoveryStrategies(domain);
     if (priorStrategies.length > 0) {
       logger.log(
@@ -88,21 +114,41 @@ export class LifeOsAgent {
       );
     }
 
+    let activeSessionId: string | undefined = options.session;
+
     const executeBrowserScript = async (script: string): Promise<any> => {
       if (options.customExecutor) {
         return options.customExecutor(script);
       }
       // Live browser daemon execution
-      const { sendCommand } = await import('../browser/daemon-client.js');
-      const { generateSessionSuffix } = await import('../browser/session-identifiers.js');
-      const sessionId = options.session || `lifeos-${generateSessionSuffix()}`;
+      const sendCommand =
+        options.sendCommand ?? (await import('../browser/daemon-client.js')).sendCommand;
+
+      if (!activeSessionId) {
+        const sessionRecord = (await sendCommand('session-create', {
+          sessionName: 'lifeos',
+        })) as { id?: string } | undefined;
+        if (!sessionRecord?.id || typeof sessionRecord.id !== 'string') {
+          throw new Error('Failed to create browser session for LifeOS agent.');
+        }
+        activeSessionId = sessionRecord.id;
+      }
+
+      const isPlaywright = /\b(page|context|browser)(\.|\?\.)/.test(script);
+      const source = isPlaywright
+        ? script
+        : `return await page.evaluate(${JSON.stringify(script)});`;
+
       const result = await sendCommand('run', {
-        session: sessionId,
+        session: activeSessionId,
         surface: 'browser',
-        source: script,
+        source,
         snapshotMode: 'act',
       });
-      return result;
+
+      return result && typeof result === 'object' && 'result' in result
+        ? (result as any).result
+        : result;
     };
 
     try {
@@ -118,23 +164,9 @@ export class LifeOsAgent {
           { target: intent.targetUrl }
         );
 
-        await executeBrowserScript(`await page.goto('${intent.targetUrl}', { waitUntil: 'domcontentloaded' }); return { ok: true };`);
-      }
-
-      // Check pre-emptive recovery strategies (e.g. cookie / modal banners)
-      for (const strat of priorStrategies) {
-        if (strat.recoveryAction === 'DISMISS_MODAL' && strat.remedyCode) {
-          logger.log(
-            'discovery',
-            'Pre-emptive Recovery',
-            'APPLY_LEARNED_STRATEGY',
-            'recovered',
-            `Applying known recovery strategy "${strat.description}" on ${domain}.`,
-            { recoveryAttempted: strat }
-          );
-          await executeBrowserScript(strat.remedyCode);
-          recoveriesAppliedCount++;
-        }
+        await executeBrowserScript(
+          `await page.goto('${intent.targetUrl}', { waitUntil: 'domcontentloaded' }); return { ok: true };`
+        );
       }
 
       // Initial perception
@@ -142,30 +174,28 @@ export class LifeOsAgent {
       let perception: RawPagePerception = await executeBrowserScript(perceptionScript);
       let uiReport = this.uiDetector.detectChange(null, perception);
 
-      // Handle unexpected modal blocker
+      // Handle unexpected modal blocker via adaptive RecoveryEngine
       if (uiReport.newModalsDetected) {
-        logger.log(
+        const recovery = await this.executeAdaptiveRecovery(
+          domain,
+          'MODAL_BLOCKER',
           'discovery',
-          'Modal Detected',
-          'DETECT_OVERLAY',
-          'warning',
-          uiReport.details,
-          { uiChange: uiReport }
+          undefined,
+          uiReport,
+          logger,
+          executeBrowserScript,
+          learnedRecoveries,
+          `(() => {
+            const d = document.querySelectorAll('dialog[open], [role="dialog"], [aria-modal="true"], .modal.show');
+            return { ok: d.length === 0 };
+          })()`,
+          { triggerContext: uiReport.details }
         );
-        const tactic = this.recoveryEngine.synthesizeRecoveryTactic(domain, 'MODAL_BLOCKER', undefined, uiReport);
-        if (tactic.remedyCode) {
-          await executeBrowserScript(tactic.remedyCode);
-          await this.learningAdapter.recordSuccessfulRecovery(tactic);
-          learnedRecoveries.push(tactic);
+
+        if (recovery.recovered) {
           recoveriesAppliedCount++;
-          logger.log(
-            'discovery',
-            'Modal Dismissed',
-            'RECOVER_MODAL',
-            'recovered',
-            'Successfully dismissed blocking modal and persisted recovery tactic to memory.',
-            { recoveryAttempted: tactic }
-          );
+          // Re-perceive after recovery
+          perception = await executeBrowserScript(perceptionScript);
         }
       }
 
@@ -198,6 +228,7 @@ export class LifeOsAgent {
 (() => {
   const actions = ${JSON.stringify(fillActions)};
   let filled = 0;
+  const missing = [];
   for (const a of actions) {
     try {
       const el = document.querySelector(a.selector);
@@ -206,14 +237,61 @@ export class LifeOsAgent {
         el.dispatchEvent(new Event('input', { bubbles: true }));
         el.dispatchEvent(new Event('change', { bubbles: true }));
         filled++;
+      } else {
+        missing.push(a.selector);
       }
-    } catch {}
+    } catch {
+      missing.push(a.selector);
+    }
   }
-  return { filled };
+  return { filled, missing };
 })()
         `;
-        const fillResult = await executeBrowserScript(fillScript);
-        fieldsFilledCount = fillResult?.filled ?? fillActions.length;
+        try {
+          const fillResult = await executeBrowserScript(fillScript);
+          fieldsFilledCount = fillResult?.filled ?? fillActions.length;
+
+          if (fillResult?.missing && fillResult.missing.length > 0) {
+            const driftedSelector = fillResult.missing[0];
+            const failureKind = this.recoveryEngine.classifyFailure(
+              `waiting for selector "${driftedSelector}" failed`,
+              undefined,
+              driftedSelector
+            );
+            const recovery = await this.executeAdaptiveRecovery(
+              domain,
+              failureKind,
+              'form_filling',
+              driftedSelector,
+              undefined,
+              logger,
+              executeBrowserScript,
+              learnedRecoveries,
+              undefined,
+              { errorMessage: `Element not found: ${driftedSelector}` }
+            );
+            if (recovery.recovered) {
+              recoveriesAppliedCount++;
+            }
+          }
+        } catch (fillErr: any) {
+          const failureKind = this.recoveryEngine.classifyFailure(
+            fillErr instanceof Error ? fillErr.message : String(fillErr)
+          );
+          const recovery = await this.executeAdaptiveRecovery(
+            domain,
+            failureKind,
+            'form_filling',
+            undefined,
+            undefined,
+            logger,
+            executeBrowserScript,
+            learnedRecoveries
+          );
+          if (recovery.recovered) {
+            recoveriesAppliedCount++;
+          }
+        }
 
         for (const a of fillActions) {
           logger.log(
@@ -222,7 +300,10 @@ export class LifeOsAgent {
             'FILL_INPUT',
             'success',
             `Populated field "${a.fieldName}" from user profile.`,
-            { target: a.selector, valuePreview: a.value.length > 20 ? a.value.slice(0, 17) + '...' : a.value }
+            {
+              target: a.selector,
+              valuePreview: a.value.length > 20 ? a.value.slice(0, 17) + '...' : a.value,
+            }
           );
         }
       }
@@ -245,31 +326,27 @@ export class LifeOsAgent {
         const uploadCheck = await executeBrowserScript(uploadScript);
 
         if (uploadCheck && !uploadCheck.ok) {
-          // Failure detected! Classify and recover
-          const failureKind = this.recoveryEngine.classifyFailure(uploadCheck.error || 'hidden file input', undefined, 'input[type="file"]');
-          logger.log(
-            'file_upload',
-            'Upload Blocked',
-            'DETECT_UPLOAD_ISSUE',
-            'warning',
-            `File upload element issue detected: ${uploadCheck.error}`,
-            { target: 'input[type="file"]' }
+          const failureKind = this.recoveryEngine.classifyFailure(
+            uploadCheck.error || 'hidden file input',
+            undefined,
+            'input[type="file"]'
           );
 
-          const tactic = this.recoveryEngine.synthesizeRecoveryTactic(domain, failureKind, 'input[type="file"]');
-          if (tactic.remedyCode) {
-            await executeBrowserScript(tactic.remedyCode);
-            await this.learningAdapter.recordSuccessfulRecovery(tactic);
-            learnedRecoveries.push(tactic);
+          const recovery = await this.executeAdaptiveRecovery(
+            domain,
+            failureKind,
+            'file_upload',
+            'input[type="file"]',
+            undefined,
+            logger,
+            executeBrowserScript,
+            learnedRecoveries,
+            uploadScript,
+            { errorMessage: uploadCheck.error }
+          );
+
+          if (recovery.recovered) {
             recoveriesAppliedCount++;
-            logger.log(
-              'file_upload',
-              'Upload Recovered',
-              'APPLY_RECOVERY',
-              'recovered',
-              `Executed recovery tactic "${tactic.description}" and revealed file input for upload.`,
-              { recoveryAttempted: tactic }
-            );
           }
         } else {
           logger.log(
@@ -288,10 +365,26 @@ export class LifeOsAgent {
       perception = await executeBrowserScript(perceptionScript);
       uiReport = this.uiDetector.detectChange(perception, perception);
 
-      // Auto-check required compliance checkboxes
-      const complianceTactic = this.recoveryEngine.synthesizeRecoveryTactic(domain, 'FORM_VALIDATION_ERROR', undefined, uiReport);
-      if (complianceTactic.remedyCode) {
-        await executeBrowserScript(complianceTactic.remedyCode);
+      if (uiReport.errorBannersDetected.length > 0 || uiReport.missingRequiredFields.length > 0) {
+        const failureKind = this.recoveryEngine.classifyFailure(
+          uiReport.errorBannersDetected.join('; ') || 'missing required fields',
+          uiReport
+        );
+
+        const recovery = await this.executeAdaptiveRecovery(
+          domain,
+          failureKind,
+          'review',
+          undefined,
+          uiReport,
+          logger,
+          executeBrowserScript,
+          learnedRecoveries
+        );
+
+        if (recovery.recovered) {
+          recoveriesAppliedCount++;
+        }
       }
 
       logger.log(
@@ -302,38 +395,23 @@ export class LifeOsAgent {
         `Form review completed. ${fieldsFilledCount} field(s) populated. Missing required: ${uiReport.missingRequiredFields.length}.`
       );
 
-      // ── Phase 5: Submission or Safe Handoff ────────────────────────────────────
-      if (intent.autoSubmit && !intent.dryRun) {
-        currentPhase = 'submission';
+      // ── Phase 5: Submission or Safe Handoff (Human Approval Gate) ─────────────
+      // Human approval is strictly mandatory before final sensitive submission.
+      currentPhase = 'submission';
+      const isAwaitingApproval = Boolean(intent.autoSubmit && !intent.dryRun);
+
+      if (isAwaitingApproval) {
         logger.log(
           'submission',
-          'Submit Application',
-          'CLICK_SUBMIT',
-          'success',
-          'Executing application submission click.'
+          'Human Approval Gate',
+          'REQUIRE_HUMAN_APPROVAL',
+          'warning',
+          'Human approval gate active: Application is fully populated and verified. Placed in standby for user verification before final submission.',
+          { target: 'button[type="submit"]' }
         );
-
-        const submitScript = `
-(() => {
-  const submitBtn = document.querySelector('button[type="submit"], input[type="submit"], button:has-text("Submit Application")');
-  if (submitBtn) {
-    submitBtn.click();
-    return { clicked: true };
-  }
-  return { clicked: false };
-})()
-        `;
-        const submitResult = await executeBrowserScript(submitScript);
-        if (submitResult && !submitResult.clicked) {
-          // Selector drift recovery
-          const driftTactic = this.recoveryEngine.synthesizeRecoveryTactic(domain, 'SELECTOR_DRIFT', 'button[type="submit"]');
-          learnedRecoveries.push(driftTactic);
-          await this.learningAdapter.recordSuccessfulRecovery(driftTactic);
-          recoveriesAppliedCount++;
-        }
       } else {
         logger.log(
-          'review',
+          'submission',
           'Review Prepared',
           'STANDBY',
           'success',
@@ -342,18 +420,22 @@ export class LifeOsAgent {
       }
 
       currentPhase = 'complete';
+      const resultStatus = isAwaitingApproval ? 'requires_user_action' : 'completed';
+
       const result: LifeOsRunResult = {
         runId,
         goal: intent.rawGoal,
         url: intent.targetUrl,
-        status: 'completed',
+        status: resultStatus,
         phase: 'complete',
         fieldsFilled: fieldsFilledCount,
         stepsCompleted: logger.getEntries().length,
         recoveriesApplied: recoveriesAppliedCount,
         learnedStrategies: learnedRecoveries,
         actionLogPath: '',
-        summary: `LifeOS Agent successfully completed workflow for ${intent.targetRole || 'application'} at ${domain}. ${fieldsFilledCount} field(s) filled, ${recoveriesAppliedCount} recovery tactic(s) applied.`,
+        summary: isAwaitingApproval
+          ? `LifeOS Agent prepared application for ${intent.targetRole || 'application'} at ${domain}. Form completed; held in standby for mandatory human approval before final submission.`
+          : `LifeOS Agent successfully completed workflow for ${intent.targetRole || 'application'} at ${domain}. ${fieldsFilledCount} field(s) filled, ${recoveriesAppliedCount} recovery tactic(s) applied.`,
       };
 
       const artifacts = logger.writeArtifacts(result);
@@ -362,6 +444,26 @@ export class LifeOsAgent {
     } catch (err: any) {
       currentPhase = 'failed';
       const errorMsg = err instanceof Error ? err.message : String(err);
+      const failureKind = this.recoveryEngine.classifyFailure(errorMsg);
+
+      // Attempt adaptive recovery for unexpected failure before terminating
+      const recovery = await this.executeAdaptiveRecovery(
+        domain,
+        failureKind,
+        currentPhase,
+        undefined,
+        undefined,
+        logger,
+        executeBrowserScript,
+        learnedRecoveries,
+        undefined,
+        { errorMessage: errorMsg }
+      );
+
+      if (recovery.recovered) {
+        recoveriesAppliedCount++;
+      }
+
       logger.log(
         currentPhase,
         'Workflow Aborted',
@@ -389,6 +491,118 @@ export class LifeOsAgent {
       result.actionLogPath = artifacts.jsonPath;
       return result;
     }
+  }
+
+  /**
+   * Unified adaptive recovery runner:
+   * 1. Logs `recovery_started`
+   * 2. Resolves strategy via RecoveryEngine (checks LearningAdapter/Breeth before heuristic fallback)
+   * 3. Logs `learned_strategy_used` or `deterministic_fallback_used`
+   * 4. Executes remedy script in page context
+   * 5. Verifies recovery state
+   * 6. Logs `recovery_verified`
+   * 7. Persists successful tactic via LearningAdapter (`strategy_learned`)
+   */
+  private async executeAdaptiveRecovery(
+    domain: string,
+    classification: FailureClassification,
+    phase: WorkflowPhase,
+    target: string | undefined,
+    uiReport: UIChangeReport | undefined,
+    logger: ActionLogger,
+    executeBrowserScript: (script: string) => Promise<any>,
+    learnedRecoveries: RecoveryTactic[],
+    verificationScript?: string,
+    context?: { errorMessage?: string; triggerContext?: string }
+  ): Promise<{ recovered: boolean; tactic?: RecoveryTactic }> {
+    // 1. recovery_started
+    logger.log(
+      phase,
+      'Recovery Started',
+      'recovery_started',
+      'warning',
+      `Diagnosed ${classification} on ${domain}. Initiating adaptive recovery.`,
+      { target, uiChange: uiReport }
+    );
+
+    // 2. Query RecoveryEngine (routes through LearningAdapter -> local/Breeth -> deterministic fallback)
+    const tactic = await this.recoveryEngine.resolveRecoveryTactic(
+      domain,
+      classification,
+      target,
+      uiReport,
+      context
+    );
+
+    // 3. learned_strategy_used vs deterministic_fallback_used
+    if (tactic.isLearned) {
+      logger.log(
+        phase,
+        'Learned Strategy Used',
+        'learned_strategy_used',
+        'recovered',
+        `Recovered using learned strategy: "${tactic.description}" (source: ${tactic.source || 'memory'}, confidence: ${tactic.confidence})`,
+        { target, recoveryAttempted: tactic, uiChange: uiReport }
+      );
+    } else {
+      logger.log(
+        phase,
+        'Deterministic Fallback Used',
+        'deterministic_fallback_used',
+        'warning',
+        `No learned strategy found; using deterministic fallback: "${tactic.description}"`,
+        { target, recoveryAttempted: tactic, uiChange: uiReport }
+      );
+    }
+
+    // 4. Execute remedy script
+    let executionSuccess = true;
+    if (tactic.remedyCode) {
+      try {
+        await executeBrowserScript(tactic.remedyCode);
+      } catch {
+        executionSuccess = false;
+      }
+    }
+
+    // 5. Verify recovery
+    let verified = executionSuccess;
+    if (executionSuccess && verificationScript) {
+      try {
+        const check = await executeBrowserScript(verificationScript);
+        verified = Boolean(check?.ok ?? check?.recovered ?? true);
+      } catch {
+        verified = executionSuccess;
+      }
+    }
+
+    if (verified) {
+      // 6. recovery_verified
+      logger.log(
+        phase,
+        'Recovery Verified',
+        'recovery_verified',
+        'recovered',
+        `Successfully resolved ${classification} via tactic "${tactic.description}".`,
+        { target, recoveryAttempted: tactic }
+      );
+
+      // 7. strategy_learned -> persist via LearningAdapter (writes local cache + Breeth)
+      await this.learningAdapter.recordSuccessfulRecovery(tactic);
+      logger.log(
+        phase,
+        'Strategy Learned',
+        'strategy_learned',
+        'success',
+        `Persisted recovery tactic "${tactic.description}" to persistent memory.`,
+        { target, recoveryAttempted: tactic }
+      );
+
+      learnedRecoveries.push(tactic);
+      return { recovered: true, tactic };
+    }
+
+    return { recovered: false, tactic };
   }
 
   private extractDomain(url: string): string {

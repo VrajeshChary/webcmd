@@ -53,6 +53,7 @@
   "scripts": {
     "benchmark": "uv run python benchmarks/scripts/run_eval.py",
     "dev": "tsx src/main.ts",
+    "demo:lifeos": "tsx src/main.ts lifeos apply \"Apply for AI Internship\" --url \"http://localhost:3000\" --dry-run",
     "dev:bun": "bun src/main.ts",
     "ui:dev": "npm --prefix ui run dev",
     "ui:build": "npm --prefix ui run build",

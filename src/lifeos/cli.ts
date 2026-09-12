@@ -63,6 +63,7 @@ export function registerLifeOsCommands(root: Command): Command {
         console.log(`⚠️ Status: ${result.status}`);
         console.log(`   ${result.summary}`);
       }
+      console.log(`🆔 Run ID:              ${result.runId}`);
       console.log(`📋 Fields Populated:    ${result.fieldsFilled}`);
       console.log(`🔁 Recoveries Applied:  ${result.recoveriesApplied}`);
       console.log(`📜 Action Log Artifact: ${result.actionLogPath}`);
@@ -142,6 +143,15 @@ export function registerLifeOsCommands(root: Command): Command {
       }
     }
   });
+
+  stratCmd
+    .command('clear')
+    .description('Clear all learned recovery strategies from local memory')
+    .action(() => {
+      const adapter = new LearningAdapter();
+      adapter.clearLocalCache();
+      console.log('✅ Cleared all learned recovery strategies from local memory.');
+    });
 
   // ── 4. Action Logs ──────────────────────────────────────────────────────────
   const logsCmd = lifeos.command('logs').description('Inspect execution audit logs and recovery timelines');

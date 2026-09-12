@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Internship Application</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Cookie & Consent Blocking Overlay Modal (Intentional surprise modal blocker) -->
+  <div id="cookie-consent-modal" class="modal show modal-overlay" role="dialog" aria-modal="true" aria-labelledby="cookie-title">
+    <div class="modal-dialog-box">
+      <div class="modal-dialog-header">
+        <span class="cookie-icon">🍪</span>
+        <h2 id="cookie-title" class="cookie-title">Cookie & Compliance Notice</h2>
+      </div>
+      <div class="modal-dialog-body">
+        <p>This portal requires standard session and privacy consent cookies to verify applicant session tokens and secure candidate workflow state.</p>
+      </div>
+      <div class="modal-dialog-actions">
+        <button type="button" id="onetrust-accept-btn-handler" class="btn-consent cookie-consent-accept" aria-label="Accept All Cookies">Accept All Cookies</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="container">
+    <div class="card">
+      <header class="card-header">
+        <div class="badge">Summer 2026 Cohort</div>
+        <h1 id="page-title">AI Internship Application</h1>
+        <p class="subtitle">Join our autonomous agents and LifeOS engineering team.</p>
+      </header>
+
+      <form id="application-form" novalidate>
+        <!-- Candidate Name (drifted from Full Name) -->
+        <div class="form-group">
+          <label for="candidate_name">Candidate Name <span class="required">*</span></label>
+          <input 
+            type="text" 
+            id="candidate_name" 
+            name="candidate_name" 
+            placeholder="e.g. Alex Morgan" 
+            required
+            autocomplete="name"
+          >
+        </div>
+
+        <!-- Contact (drifted from Email) -->
+        <div class="form-group">
+          <label for="contact">Contact <span class="required">*</span></label>
+          <input 
+            type="email" 
+            id="contact" 
+            name="contact" 
+            placeholder="alex.morgan@example.com" 
+            required
+            autocomplete="email"
+          >
+        </div>
+
+        <!-- Skills -->
+        <div class="form-group">
+          <label for="skills">Skills <span class="required">*</span></label>
+          <input 
+            type="text" 
+            id="skills" 
+            name="skills" 
+            placeholder="e.g. TypeScript, Python, LLMs, Playwright" 
+            required
+          >
+        </div>
+
+        <!-- Attach CV (drifted from Resume upload) -->
+        <div class="form-group">
+          <label for="cv">Attach CV <span class="required">*</span></label>
+          <div class="file-dropzone">
+            <input 
+              type="file" 
+              id="cv" 
+              name="cv" 
+              accept=".pdf,.docx,.doc,.txt"
+              required
+            >
+            <span class="file-hint" id="file-chosen-text">PDF, DOCX up to 10MB</span>
+          </div>
+        </div>
+
+        <!-- Primary Button moved into Container / Modal (drifted from Apply Now) -->
+        <div class="submission-container" id="submission-container">
+          <div class="submission-modal-box">
+            <div class="modal-box-header">
+              <span class="modal-badge">Application Gate</span>
+            </div>
+            <p class="modal-box-caption">Confirm details and initiate your candidate profile submission.</p>
+            <div class="modal-box-actions">
+              <button type="submit" id="start-btn" class="btn-primary">Start Application</button>
+            </div>
+          </div>
+        </div>
+      </form>
+
+      <!-- Success & Status Message Area -->
+      <div id="status-message" class="status-message hidden" role="status" aria-live="polite">
+        <span class="status-icon">✓</span>
+        <div class="status-content">
+          <strong class="status-title">Application ready for review</strong>
+          <p class="status-desc" id="status-detail">All candidate information has been captured and validated.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
