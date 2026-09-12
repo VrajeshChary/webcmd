@@ -63,73 +63,7 @@ export const INITIAL_METRICS = {
   currentRunDuration: '1m 24s',
 }
 
-export const INITIAL_APPLICATIONS = [
-  {
-    id: 'run-8812',
-    company: 'Stripe',
-    role: 'Software Engineering Intern — Infrastructure',
-    website: 'stripe.com/jobs/portal',
-    status: 'Waiting Approval',
-    date: 'Today, 1:15 PM',
-    recoveryCount: 1,
-    learnedStrategy: 'Bypassed dynamic CAPTCHA modal & mapped custom datepicker',
-    duration: '1m 45s',
-    llmCalls: 8,
-    memoryHits: 5,
-  },
-  {
-    id: 'run-8811',
-    company: 'Linear',
-    role: 'Product Engineering Fellow',
-    website: 'linear.app/careers',
-    status: 'Recovered',
-    date: 'Yesterday, 4:20 PM',
-    recoveryCount: 2,
-    learnedStrategy: 'Detected mutated iframe and resolved shadow-DOM file input',
-    duration: '2m 10s',
-    llmCalls: 12,
-    memoryHits: 9,
-  },
-  {
-    id: 'run-8810',
-    company: 'OpenAI',
-    role: 'Member of Technical Staff Intern',
-    website: 'openai.com/careers/portal',
-    status: 'Completed',
-    date: 'Sep 10, 2026',
-    recoveryCount: 0,
-    learnedStrategy: 'Direct ATS match via Greenhouse schema',
-    duration: '52s',
-    llmCalls: 4,
-    memoryHits: 14,
-  },
-  {
-    id: 'run-8809',
-    company: 'Datadog',
-    role: 'Backend Distributed Systems Intern',
-    website: 'datadoghq.com/jobs',
-    status: 'Completed',
-    date: 'Sep 8, 2026',
-    recoveryCount: 1,
-    learnedStrategy: 'Fall back to tabindex traversal on non-semantic dropdown',
-    duration: '1m 15s',
-    llmCalls: 7,
-    memoryHits: 6,
-  },
-  {
-    id: 'run-8808',
-    company: 'Anthropic',
-    role: 'Research Engineering Intern — Alignment',
-    website: 'jobs.lever.co/anthropic',
-    status: 'Failed',
-    date: 'Sep 6, 2026',
-    recoveryCount: 3,
-    learnedStrategy: 'Target portal required expired corporate SSO credential',
-    duration: '3m 02s',
-    llmCalls: 17,
-    memoryHits: 0,
-  },
-]
+export const INITIAL_APPLICATIONS = []
 
 export const DEMO_SEQUENCE = [
   {
@@ -273,11 +207,14 @@ export const agentService = {
     return Promise.resolve([...INITIAL_APPLICATIONS])
   },
 
-  async getRunDetails(runId = 'run-8812') {
+  async getRunDetails(runId) {
     const run = INITIAL_APPLICATIONS.find((r) => r.id === runId) || INITIAL_APPLICATIONS[0]
+    if (!run) {
+      return Promise.resolve(null)
+    }
     return Promise.resolve({
       ...run,
-      goal: 'Apply for ' + run.role + ' at ' + run.company,
+      goal: 'Apply for ' + (run.role || 'Role') + ' at ' + (run.company || 'Company'),
       websitesVisited: [
         run.website,
         run.website + '/auth',
@@ -291,7 +228,7 @@ export const agentService = {
         'Resolved candidate profile data',
         'Mapped input fields for full name, email, and phone',
         'Overcame altered CTA selector via fuzzy semantic intent matcher',
-        'Attached candidate resume (Alex_Chen_Resume_2026.pdf)',
+        'Attached candidate resume',
         'Triggered human safety review gate',
       ],
       failures: run.status === 'Failed' ? ['Corporate SSO required external hardware key'] : [],
@@ -305,7 +242,7 @@ export const agentService = {
       ],
       learnedStrategies: [
         {
-          domain: 'stripe.com',
+          domain: run.website || 'example.com',
           rule: 'Map [name="apply-now"] -> button:contains("Start Application")',
           cachedAt: 'Today, 1:16 PM',
         },

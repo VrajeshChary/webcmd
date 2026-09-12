@@ -32,7 +32,7 @@ export default function App() {
   const [profile, setProfile] = useState(INITIAL_PROFILE)
   const [metrics, setMetrics] = useState(INITIAL_METRICS)
   const [applications, setApplications] = useState(INITIAL_APPLICATIONS)
-  const [selectedRunId, setSelectedRunId] = useState(INITIAL_APPLICATIONS[0].id)
+  const [selectedRunId, setSelectedRunId] = useState(INITIAL_APPLICATIONS[0]?.id ?? null)
   const [runDetailsData, setRunDetailsData] = useState(null)
 
   // Timeline & Recovery State

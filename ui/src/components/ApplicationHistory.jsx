@@ -103,16 +103,30 @@ export default function ApplicationHistory({ applications = [], onSelectRun }) {
             </tr>
           </thead>
           <tbody>
-            {applications.map((app) => {
-              const badge = getStatusBadge(app.status)
-              return (
-                <tr
-                  key={app.id}
-                  style={{
-                    backgroundColor: 'var(--bg-input)',
-                    transition: 'background-color 0.15s ease',
-                  }}
-                >
+            {applications.length === 0 ? (
+              <tr>
+                <td colSpan={7} style={{
+                  padding: '2.5rem 1rem',
+                  textAlign: 'center',
+                  color: 'var(--text-muted)',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: '0.85rem',
+                }}>
+                  <div style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>📭</div>
+                  No applications recorded yet. Run a mission or click &quot;Simulate Live Demo&quot; to log a new application.
+                </td>
+              </tr>
+            ) : (
+              applications.map((app) => {
+                const badge = getStatusBadge(app.status)
+                return (
+                  <tr
+                    key={app.id}
+                    style={{
+                      backgroundColor: 'var(--bg-input)',
+                      transition: 'background-color 0.15s ease',
+                    }}
+                  >
                   {/* Company & Role */}
                   <td style={{ padding: '0.75rem', borderTopLeftRadius: '8px', borderBottomLeftRadius: '8px' }}>
                     <div style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '0.875rem' }}>
