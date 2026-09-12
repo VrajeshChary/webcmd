@@ -54,13 +54,13 @@ export const INITIAL_PROFILE = {
 }
 
 export const INITIAL_METRICS = {
-  taskCompletionRate: '98.4%',
-  recoveryCount: 7,
-  learnedStrategies: 12,
-  memoryHits: 34,
-  llmCalls: 48,
-  timeSaved: '4.8 hrs',
-  currentRunDuration: '1m 24s',
+  taskCompletionRate: '100%',
+  recoveryCount: 0,
+  learnedStrategies: 0,
+  memoryHits: 0,
+  llmCalls: 0,
+  timeSaved: '0 hrs',
+  currentRunDuration: '0s',
 }
 
 export const INITIAL_APPLICATIONS = []

@@ -36,30 +36,24 @@ export default function App() {
   const [runDetailsData, setRunDetailsData] = useState(null)
 
   // Timeline & Recovery State
-  const [timelineSteps, setTimelineSteps] = useState([
-    { id: 1, label: 'Goal understood', status: 'success', detail: 'Parsed goal target and constraints' },
-    { id: 2, label: 'Opening application portal', status: 'success', detail: 'Initialized CloakBrowser session' },
-    { id: 3, label: 'Reading page', status: 'success', detail: 'Captured DOM accessibility tree' },
-    { id: 4, label: 'Mapping form fields', status: 'success', detail: 'Matched candidate profile attributes' },
-    { id: 5, label: 'Waiting for agent', status: 'pending', detail: 'Ready for user command execution' },
-  ])
+  const [timelineSteps, setTimelineSteps] = useState([])
 
   const [recoveryData, setRecoveryData] = useState({
     activeProblem: 'None detected',
     whatChanged: 'No DOM deviations currently observed',
-    whatAgentTried: 'Standard accessibility tree mapping',
-    recoveryMethod: 'Semantic Intent Fallback + DOM Mutation Observer',
+    whatAgentTried: 'Awaiting execution',
+    recoveryMethod: 'Autonomous CDP selector reconciliation & mutation retry',
     recoverySucceeded: true,
-    learnedStrategy: 'button[name="apply-now"] → role="button"[text*="Start Application"]',
-    recoveryCount: 1,
-    learnedCount: 2,
-    usedMemory: true,
-    memoryKey: 'stripe.com/jobs/applicant-gateway',
+    learnedStrategy: 'None yet (memory empty)',
+    recoveryCount: 0,
+    learnedCount: 0,
+    usedMemory: false,
+    memoryKey: 'None',
   })
 
   // Modals & UI Toggles
   const [showApprovalModal, setShowApprovalModal] = useState(false)
-  const [showUiChangeCard, setShowUiChangeCard] = useState(true)
+  const [showUiChangeCard, setShowUiChangeCard] = useState(false)
 
   // Demo Simulation State
   const [isDemoRunning, setIsDemoRunning] = useState(false)
